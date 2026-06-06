@@ -1,45 +1,44 @@
 package pubsub
 
 import (
+	"fmt"
+
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-type SimpleQueueType string
-
-const (
-	durable   SimpleQueueType = "durable"
-	transient SimpleQueueType = "transient"
-)
+type SimpleQueueType struct {
+	Name string
+}
 
 func DeclareAndBind(
 	conn *amqp.Connection,
 	exchange,
 	queueName,
 	key string,
-	queueType SimpleQueueType, // SimpleQueueType is an "enum" type I made to represent "durable" or "transient"
+	queueType SimpleQueueType,
 ) (*amqp.Channel, amqp.Queue, error) {
-	var queue amqp.Queue
-	var channel *amqp.Channel
-
-	channel, err := conn.Channel()
+	ch, err := conn.Channel()
 	if err != nil {
-		return channel, queue, err
+		return nil, amqp.Queue{}, fmt.Errorf("could not form conneciton")
 	}
+	durable := true
+	autoDelete := false
+	exclusive := false
+	switch queueType.Name {
+	case "durable":
+		durable = true
+		autoDelete = false
+		exclusive = false
 
-	if queueType == "durable" {
-		queue, err = channel.QueueDeclare(queueName, true, false, false, false, nil)
-		if err != nil {
-			return channel, queue, err
-		}
-	} else {
-		queue, err = channel.QueueDeclare(queueName, false, true, true, false, nil)
-		if err != nil {
-			return channel, queue, err
-		}
+	case "transient":
+		durable = false
+		autoDelete = true
+		exclusive = true
 	}
-
-	channel.QueueBind(queueName, exchange, key, false, nil)
-
-	return channel, queue, nil
-
+	queue, err := ch.QueueDeclare(queueName, durable, autoDelete, exclusive, false, nil)
+	err = ch.QueueBind(queue.Name, key, exchange, false, nil)
+	if err != nil {
+		return nil, amqp.Queue{}, fmt.Errorf("failed to bind exchange to queue")
+	}
+	return ch, queue, nil
 }

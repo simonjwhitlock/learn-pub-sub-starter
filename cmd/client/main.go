@@ -3,8 +3,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"os"
-	"os/signal"
 
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/pubsub"
@@ -26,23 +24,25 @@ func main() {
 	if err != nil {
 		log.Fatal("Failed to get user name: %v", err)
 	}
-	chName := fmt.Sprintf("%v.%v", routing.PauseKey, userName)
-	_, _, err = pubsub.DeclareAndBind(rbtSess, "peril_direct", chName, routing.PauseKey, "transient")
-	if err != nil {
-		log.Fatalf("failed to declare or bind: %v", err)
-	}
+	gameState := gamelogic.NewGameState(userName)
+	chName := routing.PauseKey + "." + gameState.GetUsername()
 
-	GameState := gamelogic.NewGameState(userName)
+	err = pubsub.SubscribeJSON(rbtSess, routing.ExchangePerilDirect, chName, routing.PauseKey, pubsub.SimpleQueueType{Name: "transient"}, handlerPause(gameState))
+	if err != nil {
+		log.Fatal(err)
+	}
+	moveKey := "army_moves." + gameState.GetUsername()
+	pubsub.DeclareAndBind(rbtSess, routing.ExchangePerilTopic, moveKey, routing.GameLogSlug, pubsub.SimpleQueueType{Name: "transient"})
 
 	for {
 		words := gamelogic.GetInput()
 		if len(words) != 0 {
 			if words[0] == "spawn" {
-				GameState.CommandSpawn(words)
+				gameState.CommandSpawn(words)
 			} else if words[0] == "move" {
-				GameState.CommandMove(words)
+				gameState.CommandMove(words)
 			} else if words[0] == "status" {
-				GameState.CommandStatus()
+				gameState.CommandStatus()
 			} else if words[0] == "help" {
 				gamelogic.PrintClientHelp()
 			} else if words[0] == "spam" {
@@ -56,9 +56,11 @@ func main() {
 		}
 	}
 
-	// wait for ctrl+c
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, os.Interrupt)
-	<-signalChan
-	fmt.Println("Peril server shutting down.")
+}
+
+func handlerPause(gs *gamelogic.GameState) func(routing.PlayingState) {
+	return func(ps routing.PlayingState) {
+		defer fmt.Print("> ")
+		gs.HandlePause(ps)
+	}
 }

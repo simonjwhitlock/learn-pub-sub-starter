@@ -1,11 +1,8 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
-	"os"
-	"os/signal"
 
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/pubsub"
@@ -24,62 +21,44 @@ func main() {
 	defer rbtSess.Close()
 	fmt.Println("Connection to message service successful.")
 
-	channel, err := rbtSess.Channel()
+	ch, err := rbtSess.Channel()
 	if err != nil {
 		log.Fatalf("failed to open new channel: %v", err)
 	}
 
-	_, _, err = pubsub.DeclareAndBind(rbtSess, "peril_topic", "game_logs", "game_logs.*", "durable")
-	if err != nil {
-		log.Fatalf("failed to declare or bind: %v", err)
-	}
-
+	pubsub.DeclareAndBind(rbtSess, routing.ExchangePerilTopic, "game_logs", routing.GameLogSlug, pubsub.SimpleQueueType{Name: "durable"})
+	fmt.Println("Peril gamea server connect to rabbitmqs was successful")
+	gamelogic.PrintServerHelp()
 	for {
-		words := gamelogic.GetInput()
-		if len(words) != 0 {
-			if words[0] == "pause" {
-				fmt.Println("Sending Pause.")
-				msg := routing.PlayingState{
-					IsPaused: true,
-				}
-
-				jsonMsg, err := json.Marshal(msg)
-				if err != nil {
-					log.Fatalf("failed to Marshal message: %v", err)
-				}
-
-				err = pubsub.PublishJSON(channel, routing.ExchangePerilDirect, routing.PauseKey, jsonMsg)
-				if err != nil {
-					log.Fatalf("failed to publish message: %v", err)
-				}
-			} else if words[0] == "resume" {
-				fmt.Println("Sending Resume.")
-				msg := routing.PlayingState{
-					IsPaused: false,
-				}
-
-				jsonMsg, err := json.Marshal(msg)
-				if err != nil {
-					log.Fatalf("failed to Marshal message: %v", err)
-				}
-
-				err = pubsub.PublishJSON(channel, routing.ExchangePerilDirect, routing.PauseKey, jsonMsg)
-				if err != nil {
-					log.Fatalf("failed to publish message: %v", err)
-				}
-			} else if words[0] == "quit" {
-				fmt.Println("Sending Quit.")
-				break
-			} else {
-				fmt.Println("Unrecognised command.")
+		input := gamelogic.GetInput()
+		if len(input) < 1 {
+			continue
+		}
+		elem := input[0]
+		switch elem {
+		case "pause":
+			fmt.Println("sending pause message")
+			err := pubsub.PublishJSON(ch, routing.ExchangePerilDirect, routing.PauseKey, routing.PlayingState{
+				IsPaused: true,
+			})
+			if err != nil {
+				log.Fatal(err)
 			}
+		case "resume":
+			fmt.Println("sending resume message")
+			err := pubsub.PublishJSON(ch, routing.ExchangePerilDirect, routing.PauseKey, routing.PlayingState{
+				IsPaused: false,
+			})
+			if err != nil {
+				log.Fatal(err)
+			}
+		case "quit":
+			fmt.Println("quiting...")
+			return
+		default:
+			fmt.Println("unknown command:", elem)
 
 		}
-	}
 
-	// wait for ctrl+c
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, os.Interrupt)
-	<-signalChan
-	fmt.Println("Peril server shutting down.")
+	}
 }

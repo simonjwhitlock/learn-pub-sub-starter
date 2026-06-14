@@ -8,11 +8,19 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
+type Acktype int
+
+const (
+	Ack Acktype = iota
+	NackDiscard
+	NackRequeue
+)
+
 func SubscribeJSON[T any](
 	conn *amqp.Connection,
 	exchange, queueName, key string,
 	queueType SimpleQueueType, // an enum to represent "durable" or "transient"
-	handler func(T),
+	handler func(T) Acktype,
 ) error {
 	ch, queue, err := DeclareAndBind(conn, exchange, queueName, key, queueType)
 	if err != nil {
@@ -24,18 +32,33 @@ func SubscribeJSON[T any](
 		return fmt.Errorf("failed to consume channel: %v", err)
 	}
 
+	unmarshaller := func(data []byte) (T, error) {
+		var target T
+		err := json.Unmarshal(data, &target)
+		return target, err
+	}
+
 	go func() {
 		for message := range consumer {
-			var msg T
-			err := json.Unmarshal(message.Body, &msg)
+			msg, err := unmarshaller(message.Body)
 			if err != nil {
 				message.Nack(false, false)
-				fmt.Printf("failed to extract message JSON: %v", err)
+				fmt.Printf("failed to extract message JSON: %v\n", err)
 				continue
 			}
-			handler(msg)
-			if err := message.Ack(false); err != nil {
-				log.Printf("failed to ACK message: %v", err)
+			switch handler(msg) {
+			case Ack:
+				message.Ack(false)
+				log.Println("message acknolaged")
+				fmt.Print("> ")
+			case NackRequeue:
+				message.Nack(false, true)
+				log.Println("message not acknolaged: Requeue")
+				fmt.Print("> ")
+			case NackDiscard:
+				message.Nack(false, false)
+				log.Println("message not acknolaged: Discard")
+				fmt.Print("> ")
 			}
 		}
 	}()

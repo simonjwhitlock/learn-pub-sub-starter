@@ -6,9 +6,12 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-type SimpleQueueType struct {
-	Name string
-}
+type SimpleQueueType int
+
+const (
+	SimpleQueueDurable SimpleQueueType = iota
+	SimpleQueueTransient
+)
 
 func DeclareAndBind(
 	conn *amqp.Connection,
@@ -19,26 +22,30 @@ func DeclareAndBind(
 ) (*amqp.Channel, amqp.Queue, error) {
 	ch, err := conn.Channel()
 	if err != nil {
-		return nil, amqp.Queue{}, fmt.Errorf("could not form conneciton")
+		return nil, amqp.Queue{}, fmt.Errorf("could not create channel: %v", err)
 	}
-	durable := true
-	autoDelete := false
-	exclusive := false
-	switch queueType.Name {
-	case "durable":
-		durable = true
-		autoDelete = false
-		exclusive = false
 
-	case "transient":
-		durable = false
-		autoDelete = true
-		exclusive = true
-	}
-	queue, err := ch.QueueDeclare(queueName, durable, autoDelete, exclusive, false, amqp.Table{"x-dead-letter-exchange": "peril_dlx"})
-	err = ch.QueueBind(queue.Name, key, exchange, false, nil)
+	queue, err := ch.QueueDeclare(
+		queueName,                       // name
+		queueType == SimpleQueueDurable, // durable
+		queueType != SimpleQueueDurable, // auto-delete
+		queueType != SimpleQueueDurable, // exclusive
+		false,                           // noWait
+		amqp.Table{
+			"x-dead-letter-exchange": "peril_dlx",
+		},
+	)
 	if err != nil {
-		return nil, amqp.Queue{}, fmt.Errorf("failed to bind exchange to queue")
+		return nil, amqp.Queue{}, fmt.Errorf("could not declare queue: %v", err)
 	}
+
+	err = ch.QueueBind(
+		queue.Name, // queue name
+		key,        // routing key
+		exchange,   // exchange
+		false,      // no-wait
+		nil,        // args
+	)
+
 	return ch, queue, nil
 }
